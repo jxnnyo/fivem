@@ -2,6 +2,7 @@
 #include <ScriptEngine.h>
 #include <scrEngine.h>
 #include <EntitySystem.h>
+#include <MinHook.h>
 #include <Hooking.h>
 #include <Hooking.Stubs.h>
 #include <Hooking.Patterns.h>
