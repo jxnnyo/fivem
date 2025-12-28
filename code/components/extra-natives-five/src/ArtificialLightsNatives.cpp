@@ -2,18 +2,15 @@
 #include <ScriptEngine.h>
 #include <scrEngine.h>
 #include <EntitySystem.h>
-#include <MinHook.h>
 #include <Hooking.h>
 #include <Hooking.Stubs.h>
 #include <Hooking.Patterns.h>
 #include <ScriptSerialization.h>
+#include <MinHook.h>
 #include <GameInit.h>
 #include <unordered_set>
 #include <shared_mutex>
 
-//
-// Per-Entity Artificial Lights Control
-//
 // These natives allow controlling which specific entities ignore the artificial lights
 // "blackout" mode. When SET_ARTIFICIAL_LIGHTS_STATE(true) is called (blackout enabled),
 // entities marked with SET_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE will keep their lights on.
@@ -26,18 +23,16 @@
 static std::unordered_set<void*> g_entitiesIgnoringBlackout;
 static std::shared_mutex g_entitiesMutex;
 
-// Game globals
+// globals
 static bool* g_disableArtificialLights = nullptr;
 static bool* g_disableArtificialVehLights = nullptr;
 
 // CLightEntity::m_parentEntity offset
 constexpr ptrdiff_t LIGHT_ENTITY_PARENT_OFFSET = 0xD0;
 
-// Original function
-// bool __fastcall Lights::AddSceneLight(CLightSource *sceneLight, const CLightEntity *lightEntity, bool addToPreviousLightList)
+// original function
 static bool (*g_origAddSceneLight)(void* sceneLight, void* lightEntity, bool addToPreviousLightList);
 
-// Check if an entity should ignore blackout
 static bool DoesEntityIgnoreBlackout(void* entity)
 {
 	if (!entity)
@@ -46,7 +41,6 @@ static bool DoesEntityIgnoreBlackout(void* entity)
 	return g_entitiesIgnoringBlackout.find(entity) != g_entitiesIgnoringBlackout.end();
 }
 
-// Get parent entity from CLightEntity
 static void* GetParentEntityFromLightEntity(void* lightEntity)
 {
 	if (!lightEntity)
@@ -58,7 +52,6 @@ static void* GetParentEntityFromLightEntity(void* lightEntity)
 	return *parentPtr;
 }
 
-// Hooked function - temporarily disable blackout for marked entities
 static bool AddSceneLightHook(void* sceneLight, void* lightEntity, bool addToPreviousLightList)
 {
 	void* parentEntity = GetParentEntityFromLightEntity(lightEntity);
@@ -69,21 +62,21 @@ static bool AddSceneLightHook(void* sceneLight, void* lightEntity, bool addToPre
 
 	if (shouldOverride && g_disableArtificialLights && g_disableArtificialVehLights)
 	{
-		// Save original states
+		// save original states
 		origLightsState = *g_disableArtificialLights;
 		origVehLightsState = *g_disableArtificialVehLights;
 
-		// Temporarily disable blackout for this entity's lights
+		// temporarily disable blackout for this entitys lights
 		*g_disableArtificialLights = false;
 		*g_disableArtificialVehLights = false;
 	}
 
-	// Call original function
+	// call original function
 	bool result = g_origAddSceneLight(sceneLight, lightEntity, addToPreviousLightList);
 
 	if (shouldOverride && g_disableArtificialLights && g_disableArtificialVehLights)
 	{
-		// Restore original states
+		// restore original states
 		*g_disableArtificialLights = origLightsState;
 		*g_disableArtificialVehLights = origVehLightsState;
 	}
@@ -91,12 +84,8 @@ static bool AddSceneLightHook(void* sceneLight, void* lightEntity, bool addToPre
 	return result;
 }
 
-// Hook setup and native registration
 static HookFunction hookFunction([]()
 {
-	// Hook Lights::AddSceneLight and find the globals from within it
-	// Signature: bool __fastcall Lights::AddSceneLight(CLightSource*, const CLightEntity*, bool)
-	// Pattern: Function prologue
 	{
 		auto location = hook::get_pattern<char>("48 8B C4 48 89 58 ? 48 89 70 ? 48 89 78 ? 4C 89 60 ? 55 41 56 41 57 48 8D 68 ? 48 81 EC ? ? ? ? 0F 29 70 ? 45 33 E4");
 
@@ -106,11 +95,9 @@ static HookFunction hookFunction([]()
 		{
 			hook::range_pattern p((uintptr_t)location, (uintptr_t)location + 0x80, "44 38 25");
 
-			// First match: sm_disableArtificialLights
 			auto firstMatch = p.get(0).get<char>(0);
 			g_disableArtificialLights = hook::get_address<bool*>(firstMatch + 3);
 
-			// Second match: sm_disableArtificialVehLights
 			auto secondMatch = p.get(1).get<char>(0);
 			g_disableArtificialVehLights = hook::get_address<bool*>(secondMatch + 3);
 		}
@@ -120,7 +107,6 @@ static HookFunction hookFunction([]()
 		MH_EnableHook(location);
 	}
 
-	// SET_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE(entity, toggle)
 	fx::ScriptEngine::RegisterNativeHandler("SET_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE", [](fx::ScriptContext& ctx)
 	{
 		int entityHandle = ctx.GetArgument<int>(0);
@@ -143,7 +129,6 @@ static HookFunction hookFunction([]()
 		}
 	});
 
-	// DOES_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE(entity) -> bool
 	fx::ScriptEngine::RegisterNativeHandler("DOES_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE", [](fx::ScriptContext& ctx)
 	{
 		int entityHandle = ctx.GetArgument<int>(0);
@@ -158,14 +143,12 @@ static HookFunction hookFunction([]()
 		ctx.SetResult<bool>(DoesEntityIgnoreBlackout(entity));
 	});
 
-	// CLEAR_ALL_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE()
 	fx::ScriptEngine::RegisterNativeHandler("CLEAR_ALL_ENTITY_LIGHTS_IGNORE_ARTIFICIAL_STATE", [](fx::ScriptContext& ctx)
 	{
 		std::unique_lock lock(g_entitiesMutex);
 		g_entitiesIgnoringBlackout.clear();
 	});
 
-	// GET_ALL_ENTITIES_IGNORING_ARTIFICIAL_LIGHTS_STATE() -> int[]
 	fx::ScriptEngine::RegisterNativeHandler("GET_ALL_ENTITIES_IGNORING_ARTIFICIAL_LIGHTS_STATE", [](fx::ScriptContext& ctx)
 	{
 		std::vector<int> entityList;
@@ -183,7 +166,6 @@ static HookFunction hookFunction([]()
 		ctx.SetResult(fx::SerializeObject(entityList));
 	});
 
-	// Clear tracked entities on network session end
 	OnKillNetworkDone.Connect([]()
 	{
 		std::unique_lock lock(g_entitiesMutex);
